@@ -96,7 +96,7 @@ module.exports = {
         const rawQuery = `${agent} ${map} ${side} ${location}`;
         const query = rawQuery.toLowerCase().replace(/\s+/g, ' ').trim();
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
         // 1. Kiểm tra RAM Cache (Siêu nhanh 1-2s)
         if (RAM_CACHE.has(query)) {
