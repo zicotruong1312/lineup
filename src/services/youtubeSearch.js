@@ -1,6 +1,6 @@
 const { google } = require('googleapis');
 
-async function searchYouTube(query) {
+async function searchYouTube(query, agent = '', map = '') {
     if (!process.env.YOUTUBE_API_KEY) {
         console.warn('⚠️ Thiếu YOUTUBE_API_KEY trong file .env');
         return [];
@@ -14,11 +14,11 @@ async function searchYouTube(query) {
     try {
         const response = await youtube.search.list({
             part: 'snippet',
-            q: `"${agent}" ${map} lineup valorant shorts`,
+            q: `"${agent}" "${map}" lineup valorant shorts`,
             type: 'video',
             videoDuration: 'short', 
             order: 'date',
-            maxResults: 5 // Lấy nhiều hơn một chút để lọc
+            maxResults: 7 // Lấy nhiều hơn một chút để lọc
         });
 
         if (!response.data.items || response.data.items.length === 0) {
@@ -27,8 +27,9 @@ async function searchYouTube(query) {
 
         const filtered = response.data.items.filter(item => {
             const title = item.snippet.title.toLowerCase();
-            // Nếu có agent, bắt buộc title phải chứa tên agent đó
+            // Bắt buộc title phải chứa tên agent và map
             if (agent && !title.includes(agent.toLowerCase())) return false;
+            if (map && !title.includes(map.toLowerCase())) return false;
             return true;
         });
 
