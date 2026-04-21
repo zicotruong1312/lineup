@@ -14,7 +14,7 @@ async function searchTikTok(query) {
             q: query + ' lineup valorant',
             auth: process.env.GOOGLE_API_KEY,
             sort: 'date',
-            num: 5, 
+            num: 3, 
         });
 
         if (!response.data.items || response.data.items.length === 0) {
@@ -29,7 +29,11 @@ async function searchTikTok(query) {
             thumbnail: item.pagemap?.cse_image?.[0]?.src || null
         }));
     } catch (error) {
-        console.error('❌ Lỗi gọi TikTok (Google CSE) API:', error.message);
+        if (error.message.includes('access to Custom Search JSON API')) {
+            console.error('❌ TikTok Search: Custom Search API not enabled or access denied.');
+        } else {
+            console.error('❌ Lỗi gọi TikTok (Google CSE) API:', error.message);
+        }
         return [];
     }
 }

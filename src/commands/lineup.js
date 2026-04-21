@@ -100,69 +100,100 @@ module.exports = {
 
         if (!cache || cache.rejectedIndexes.length >= cache.results.length) {
             isUsingCache = false;
-            await interaction.editReply(`🤖 **Đang dùng drone quét dữ liệu từ YouTube & TikTok cho:** \`${rawQuery}\`...`);
+            await interaction.editReply(`🔎 **Đang tìm Lineup siêu tốc cho:** \`${rawQuery}\`...`);
 
-            const [ytResults, ttResults] = await Promise.all([
-                searchYouTube(query),
-                searchTikTok(query)
-            ]);
+            // Giai đoạn 1: Tìm YouTube trước vì nó nhanh nhất
+            const ytResults = await searchYouTube(query);
+            
+            if (ytResults.length > 0) {
+                // Có kết quả YT, hiển thị ngay lập tức
+                const tempResults = [...ytResults];
+                let tempIndex = 0;
 
-            const combinedResults = [];
-            const maxLength = Math.max(ytResults.length, ttResults.length);
-            for (let i = 0; i < maxLength; i++) {
-                if (ttResults[i]) combinedResults.push(ttResults[i]);
-                if (ytResults[i]) combinedResults.push(ytResults[i]);
+                const renderStepMessage = async (index, searchingMore = true) => {
+                    const video = tempResults[index];
+                    const platformIcon = '▶️ YouTube';
+                    let content = `🎯 **Lineup cho ${rawQuery.toUpperCase()}**\nNguồn: **${platformIcon}**\n${video.url}`;
+                    if (searchingMore) content += '\n\n*(Drone vẫn đang quét thêm trên TikTok...)*';
+                    
+                    const btnAccept = new ButtonBuilder().setCustomId('accept').setLabel('✅ Chuẩn rồi').setStyle(ButtonStyle.Success);
+                    const btnReject = new ButtonBuilder().setCustomId('reject').setLabel('❌ Báo lỗi/Kế tiếp').setStyle(ButtonStyle.Danger);
+                    
+                    return { 
+                        content, 
+                        components: [new ActionRowBuilder().addComponents(btnAccept, btnReject)] 
+                    };
+                };
+
+                await interaction.editReply(await renderStepMessage(tempIndex, true));
+
+                // Giai đoạn 2: Tìm TikTok ngầm
+                const ttResults = await searchTikTok(query);
+                
+                // Trộn kết quả và tạo Cache
+                const finalResults = [];
+                const maxLength = Math.max(ytResults.length, ttResults.length);
+                for (let i = 0; i < maxLength; i++) {
+                    if (ttResults[i]) finalResults.push(ttResults[i]);
+                    if (ytResults[i]) finalResults.push(ytResults[i]);
+                }
+
+                if (cache) await LineupCache.deleteOne({ _id: cache._id });
+                cache = await LineupCache.create({
+                    searchQuery: query,
+                    results: finalResults,
+                    rejectedIndexes: []
+                });
+
+                // Cập nhật lại UI bỏ dòng "đang tìm thêm"
+                await interaction.editReply(await renderStepMessage(tempIndex, false));
+
+            } else {
+                // Nếu YouTube không có gì, phải đợi TikTok
+                const ttResults = await searchTikTok(query);
+                if (ttResults.length === 0) {
+                    return interaction.editReply(`❌ Không tìm thấy Lineup nào cho \`${rawQuery}\` trên cả YT & TikTok!`);
+                }
+
+                if (cache) await LineupCache.deleteOne({ _id: cache._id });
+                cache = await LineupCache.create({
+                    searchQuery: query,
+                    results: ttResults,
+                    rejectedIndexes: []
+                });
             }
-
-            if (combinedResults.length === 0) {
-                return interaction.editReply(`❌ Không tìm thấy Lineup nào cho \`${rawQuery}\` trên mạng! Thử dùng từ khóa dễ hiểu hơn xem sao.`);
-            }
-
-            if (cache) {
-                 await LineupCache.deleteOne({ _id: cache._id });
-            }
-
-            cache = await LineupCache.create({
-                searchQuery: query,
-                results: combinedResults,
-                rejectedIndexes: []
-            });
         }
 
+        // --- PHẦN COLLECTOR CHÍNH ---
         let currentIndex = 0;
+        // Tìm video hợp lệ đầu tiên
         while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
             currentIndex++;
         }
 
         if (currentIndex >= cache.results.length) {
-             return interaction.editReply(`❌ Tất cả video tìm được đều đã bị đánh dấu là sai. Xin hãy thử lại với một vị trí khác.`);
+             return interaction.editReply(`❌ Tất cả video tìm được đều đã bị đánh dấu là sai.`);
         }
 
-        const renderMessage = async (index, isFinal = false) => {
+        const renderFinalMessage = async (index, isFinal = false) => {
             const video = cache.results[index];
             const platformIcon = video.platform === 'tiktok' ? '🎵 TikTok' : '▶️ YouTube';
-            
             const messageObj = {
-                content: `🎯 **Lineup cho ${rawQuery.toUpperCase()}** ${isUsingCache ? '(Tải từ Cache ⚡)' : ''}\nNguồn: **${platformIcon}**\n${video.url}`
+                content: `🎯 **Lineup cho ${rawQuery.toUpperCase()}** ${isUsingCache ? '(Cache ⚡)' : ''}\nNguồn: **${platformIcon}**\n${video.url}`
             };
 
             if (!isFinal) {
-                const btnAccept = new ButtonBuilder()
-                    .setCustomId('accept')
-                    .setLabel('✅ Chuẩn rồi')
-                    .setStyle(ButtonStyle.Success);
-                const btnReject = new ButtonBuilder()
-                    .setCustomId('reject')
-                    .setLabel('❌ Báo lỗi/Tìm tiếp')
-                    .setStyle(ButtonStyle.Danger);
-                
+                const btnAccept = new ButtonBuilder().setCustomId('accept').setLabel('✅ Chuẩn rồi').setStyle(ButtonStyle.Success);
+                const btnReject = new ButtonBuilder().setCustomId('reject').setLabel('❌ Báo lỗi/Kế tiếp').setStyle(ButtonStyle.Danger);
                 messageObj.components = [new ActionRowBuilder().addComponents(btnAccept, btnReject)];
             } else {
                 messageObj.components = [];
             }
-
             return messageObj;
         };
+
+        // Hiển thị kết quả chính thức từ Cache (đã gộp YT/TT)
+        await interaction.editReply(await renderFinalMessage(currentIndex));
 
         const responseMessage = await interaction.fetchReply();
         const collector = responseMessage.createMessageComponentCollector({ time: 5 * 60 * 1000 });
@@ -170,56 +201,37 @@ module.exports = {
         collector.on('collect', async i => {
             try {
                 if (i.user.id !== interaction.user.id) {
-                    return i.reply({ 
-                        content: '❌ Chỉ người dùng lệnh mới có thể phản hồi nút bấm này!', 
-                        flags: [MessageFlags.Ephemeral] 
-                    });
+                    return i.reply({ content: '❌ Chỉ người dùng lệnh mới có thể phản hồi!', flags: [MessageFlags.Ephemeral] });
                 }
 
                 if (i.customId === 'accept') {
-                    await i.update(await renderMessage(currentIndex, true));
+                    await i.update(await renderFinalMessage(currentIndex, true));
                     collector.stop('accepted');
                 } else if (i.customId === 'reject') {
                     if (!cache.rejectedIndexes.includes(currentIndex)) {
                         cache.rejectedIndexes.push(currentIndex);
                         await cache.save();
                     }
-
                     currentIndex++;
                     while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
                         currentIndex++;
                     }
 
                     if (currentIndex >= cache.results.length) {
-                        await i.update({
-                            content: `❌ Hết sạch video trong kho dự trữ rồi. Có vẻ hệ thống vẫn chưa đủ thông minh với vị trí này...`,
-                            components: []
-                        });
+                        await i.update({ content: `❌ Hết sạch video trong kho dự trữ rồi.`, components: [] });
                         collector.stop('exhausted');
                     } else {
-                        isUsingCache = true; 
-                        await i.update(await renderMessage(currentIndex));
+                        await i.update(await renderFinalMessage(currentIndex));
                     }
                 }
             } catch (error) {
-                console.error('❌ Error during button collector processing:');
-                console.error(error);
-                if (!i.replied && !i.deferred) {
-                    try {
-                        await i.reply({ 
-                            content: 'Đã có lỗi xảy ra khi xử lý nút bấm!', 
-                            flags: [MessageFlags.Ephemeral] 
-                        });
-                    } catch (e) {}
-                }
+                console.error('❌ Collector error:', error);
             }
         });
 
         collector.on('end', async (collected, reason) => {
              if (reason === 'time') {
-                 try {
-                     await interaction.editReply({ components: [] });
-                 } catch (e) {}
+                 try { await interaction.editReply({ components: [] }); } catch (e) {}
              }
         });
     },

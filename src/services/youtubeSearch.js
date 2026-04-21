@@ -18,7 +18,7 @@ async function searchYouTube(query) {
             type: 'video',
             videoDuration: 'short', 
             order: 'date',
-            maxResults: 5
+            maxResults: 3
         });
 
         if (!response.data.items || response.data.items.length === 0) {
