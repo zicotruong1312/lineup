@@ -117,7 +117,7 @@ module.exports = {
         await interaction.editReply(`🔎 **Đang tìm Lineup chuẩn cho ${agent} tại ${map}...**`);
 
         // Giai đoạn 1: YouTube (Ưu tiên tốc độ)
-        const ytResults = await searchYouTube(query, agent, map);
+        const ytResults = await searchYouTube(query, agent, map, side, location);
         
         let currentCache = null;
 
@@ -140,7 +140,7 @@ module.exports = {
             await interaction.editReply(await renderStepMessage(tempIndex, true));
 
             // Giai đoạn 2: TikTok (Thông qua YouTube Shorts) ngầm
-            const ttResults = await searchTikTok(query, agent, map);
+            const ttResults = await searchTikTok(query, agent, map, side, location);
             
             const finalResults = [];
             const maxLength = Math.max(ytResults.length, ttResults.length);
@@ -161,7 +161,7 @@ module.exports = {
 
         } else {
             // Đợi TikTok nếu YT không có (hiếm khi xảy ra vì đều dùng YT now)
-            const ttResults = await searchTikTok(query, agent, map);
+            const ttResults = await searchTikTok(query, agent, map, side, location);
             if (ttResults.length === 0) {
                 return interaction.editReply(`❌ Không tìm thấy Lineup nào của **${agent}** tại bản đồ **${map}** cho vị trí này!`);
             }
