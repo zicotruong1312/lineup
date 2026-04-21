@@ -1,4 +1,16 @@
 require('dotenv').config();
+const http = require('http');
+
+// Tạo một máy chủ ảo bằng HTTP built-in để đánh lừa Render + dùng cho UptimeRobot
+// Chuyển lên đầu để đảm bảo Render nhận diện được port ngay lập tức
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot LineUp is alive and running!\n');
+}).listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Dummy Web Server is running on port ${PORT}`);
+});
+
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -71,5 +83,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         console.error(error);
     }
 })();
+
+// Code server cũ đã được chuyển lên đầu file
 
 client.login(process.env.DISCORD_TOKEN);
