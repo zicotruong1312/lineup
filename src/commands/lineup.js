@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const LineupCache = require('../models/LineupCache');
 const { searchYouTube } = require('../services/youtubeSearch');
 const { searchTikTok } = require('../services/tiktokSearch');
@@ -115,42 +115,62 @@ module.exports = {
             return messageObj;
         };
 
-        const responseMessage = await interaction.editReply(await renderMessage(currentIndex));
+        // Lấy Message object chính xác nhất để gắn Collector
+        const responseMessage = await interaction.fetchReply();
 
         // Khởi tạo Collector nốt nghe các Button (hiệu lực trong 5 phút)
         const collector = responseMessage.createMessageComponentCollector({ time: 5 * 60 * 1000 });
 
         collector.on('collect', async i => {
-            if (i.user.id !== interaction.user.id) {
-                return i.reply({ content: '❌ Chỉ người dùng lệnh mới có thể phản hồi nút bấm này!', flags: ['Ephemeral'] });
-            } // (DiscordJS v14.15+ dùng flags: ['Ephemeral']. Cũ hơn dùng ephemeral: true. Do là mới cào v14 default nên flags là an toàn)
-
-            if (i.customId === 'accept') {
-                // Người dùng xác nhận đúng, dừng collector, update message xóa nút
-                await i.update(await renderMessage(currentIndex, true));
-                collector.stop('accepted');
-            } else if (i.customId === 'reject') {
-                // Báo sai -> Đẩy index này vào bị loại
-                if (!cache.rejectedIndexes.includes(currentIndex)) {
-                    cache.rejectedIndexes.push(currentIndex);
-                    await cache.save();
-                }
-
-                // Nhảy sang video kế tiếp hợp lệ
-                currentIndex++;
-                while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
-                    currentIndex++;
-                }
-
-                if (currentIndex >= cache.results.length) {
-                    await i.update({
-                        content: `❌ Hết sạch video trong kho dự trữ rồi. Có vẻ hệ thống vẫn chưa đủ thông minh với vị trí này...`,
-                        components: []
+            try {
+                if (i.user.id !== interaction.user.id) {
+                    return i.reply({ 
+                        content: '❌ Chỉ người dùng lệnh mới có thể phản hồi nút bấm này!', 
+                        flags: [MessageFlags.Ephemeral] 
                     });
-                    collector.stop('exhausted');
-                } else {
-                    isUsingCache = true; // Chuyển nhảy tab trong cache được xem là call từ bộ nhớ
-                    await i.update(await renderMessage(currentIndex));
+                }
+
+                if (i.customId === 'accept') {
+                    console.log(`[Lineup] User accepted result at index ${currentIndex}`);
+                    // Người dùng xác nhận đúng, dừng collector, update message xóa nút
+                    await i.update(await renderMessage(currentIndex, true));
+                    collector.stop('accepted');
+                } else if (i.customId === 'reject') {
+                    console.log(`[Lineup] User rejected result at index ${currentIndex}`);
+                    // Báo sai -> Đẩy index này vào bị loại
+                    if (!cache.rejectedIndexes.includes(currentIndex)) {
+                        cache.rejectedIndexes.push(currentIndex);
+                        await cache.save();
+                    }
+
+                    // Nhảy sang video kế tiếp hợp lệ
+                    currentIndex++;
+                    while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
+                        currentIndex++;
+                    }
+
+                    if (currentIndex >= cache.results.length) {
+                        await i.update({
+                            content: `❌ Hết sạch video trong kho dự trữ rồi. Có vẻ hệ thống vẫn chưa đủ thông minh với vị trí này...`,
+                            components: []
+                        });
+                        collector.stop('exhausted');
+                    } else {
+                        isUsingCache = true; 
+                        await i.update(await renderMessage(currentIndex));
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Error during button collector processing:');
+                console.error(error);
+                // Cố gắng phản hồi lỗi nếu tương tác chưa được acknowledge
+                if (!i.replied && !i.deferred) {
+                    try {
+                        await i.reply({ 
+                            content: 'Đã có lỗi xảy ra khi xử lý nút bấm!', 
+                            flags: [MessageFlags.Ephemeral] 
+                        });
+                    } catch (e) {}
                 }
             }
         });
