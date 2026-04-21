@@ -14,7 +14,7 @@ async function searchYouTube(query) {
     try {
         const response = await youtube.search.list({
             part: 'snippet',
-            q: query + ' lineup valorant shorts',
+            q: `"${agent}" ${map} lineup valorant shorts`,
             type: 'video',
             videoDuration: 'short', 
             order: 'date',

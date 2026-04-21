@@ -1,6 +1,7 @@
 require('dotenv').config();
 const http = require('http');
 
+// Build trigger: 2026-04-21 09:44 AM - Strict Filtering & RAM Cache
 // Tạo một máy chủ ảo bằng HTTP built-in để đánh lừa Render + dùng cho UptimeRobot
 // Chuyển lên đầu để đảm bảo Render nhận diện được port ngay lập tức
 const PORT = process.env.PORT || 3000;

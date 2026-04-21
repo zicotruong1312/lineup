@@ -11,7 +11,7 @@ async function searchTikTok(query, agent = '') {
     try {
         const response = await customsearch.cse.list({
             cx: process.env.GOOGLE_CX,
-            q: query + ' lineup valorant',
+            q: `"${agent}" ${query} lineup valorant`,
             auth: process.env.GOOGLE_API_KEY,
             sort: 'date',
             num: 5 // Lấy nhiều hơn 1 chút để lọc
