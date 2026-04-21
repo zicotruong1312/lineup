@@ -30,13 +30,13 @@ const LOCATIONS_MAP = {
     'Corrode': ['A Site', 'B Site', 'Mid', 'A Main', 'B Main', 'Center', 'Tower']
 };
 
-// Bộ nhớ đạm RAM để phản hồi 1-2s cho các tìm kiếm lặp lại
+// Bộ nhớ đệm RAM để phản hồi 1-2s cho các tìm kiếm lặp lại
 const RAM_CACHE = new Map();
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('lineup')
-        .setDescription('Tự động tìm kiếm vị trí Lineup cho các Agent (YouTube/TikTok)')
+        .setDescription('Tự động tìm kiếm vị trí Lineup cho các Agent')
         .addStringOption(option =>
             option.setName('agent')
                 .setDescription('Tên Agent (Vd: Sova, Viper,...)')
@@ -101,14 +101,16 @@ module.exports = {
         // 1. Kiểm tra RAM Cache (Siêu nhanh 1-2s)
         if (RAM_CACHE.has(query)) {
             const cacheData = RAM_CACHE.get(query);
-            return interaction.editReply(await this.renderFinalMessage(query, cacheData, 0, true));
+            await interaction.editReply(await this.renderFinalMessage(query, cacheData, 0, true));
+            return this.setupCollector(interaction, query, true);
         }
 
         // 2. Kiểm tra Database Cache
         let dbCache = await LineupCache.findOne({ searchQuery: query });
         if (dbCache && dbCache.rejectedIndexes.length < dbCache.results.length) {
             RAM_CACHE.set(query, dbCache);
-            return interaction.editReply(await this.renderFinalMessage(query, dbCache, 0, true));
+            await interaction.editReply(await this.renderFinalMessage(query, dbCache, 0, true));
+            return this.setupCollector(interaction, query, true);
         }
 
         // 3. Nếu không có cache, tiến hành tìm kiếm mới
@@ -127,7 +129,7 @@ module.exports = {
             const renderStepMessage = async (index, searchingMore = true) => {
                 const video = tempResults[index];
                 let content = `🎯 **Lineup cho ${rawQuery.toUpperCase()}**\nNguồn: **▶️ YouTube**\n${video.url}`;
-                if (searchingMore) content += '\n\n*(Đang quét thêm TikTok để có nhiều lựa chọn hơn...)*';
+                if (searchingMore) content += '\n\n*(Đang quét thêm video phong cách TikTok để có nhiều lựa chọn hơn...)*';
                 
                 const btnAccept = new ButtonBuilder().setCustomId('accept').setLabel('✅ Chuẩn rồi').setStyle(ButtonStyle.Success);
                 const btnReject = new ButtonBuilder().setCustomId('reject').setLabel('❌ Báo lỗi/Kế tiếp').setStyle(ButtonStyle.Danger);
@@ -137,79 +139,127 @@ module.exports = {
 
             await interaction.editReply(await renderStepMessage(tempIndex, true));
 
-            // Giai đoạn 2: TikTok ngầm
+            // Giai đoạn 2: TikTok (Thông qua YouTube Shorts) ngầm
             const ttResults = await searchTikTok(query, agent);
             
+            const finalResults = [];
+            const maxLength = Math.max(ytResults.length, ttResults.length);
+            for (let i = 0; i < maxLength; i++) {
+                if (ttResults[i]) finalResults.push(ttResults[i]);
+                if (ytResults[i]) finalResults.push(ytResults[i]);
+            }
 
-        // --- PHẦN COLLECTOR CHÍNH ---
+            if (dbCache) await LineupCache.deleteOne({ _id: dbCache._id });
+            currentCache = await LineupCache.create({
+                searchQuery: query,
+                results: finalResults,
+                rejectedIndexes: []
+            });
+
+            RAM_CACHE.set(query, currentCache);
+            await interaction.editReply(await renderStepMessage(tempIndex, false));
+
+        } else {
+            // Đợi TikTok nếu YT không có (hiếm khi xảy ra vì đều dùng YT now)
+            const ttResults = await searchTikTok(query, agent);
+            if (ttResults.length === 0) {
+                return interaction.editReply(`❌ Không tìm thấy Lineup nào của **${agent}** tại vị trí này!`);
+            }
+
+            if (dbCache) await LineupCache.deleteOne({ _id: dbCache._id });
+            currentCache = await LineupCache.create({
+                searchQuery: query,
+                results: ttResults,
+                rejectedIndexes: []
+            });
+            RAM_CACHE.set(query, currentCache);
+        }
+
+        // --- PHẦN COLLECTOR GỐC ---
         let currentIndex = 0;
         // Tìm video hợp lệ đầu tiên
-        while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
+        while (currentCache.rejectedIndexes.includes(currentIndex) && currentIndex < currentCache.results.length) {
             currentIndex++;
         }
 
-        if (currentIndex >= cache.results.length) {
+        if (currentIndex >= currentCache.results.length) {
              return interaction.editReply(`❌ Tất cả video tìm được đều đã bị đánh dấu là sai.`);
         }
 
-        const renderFinalMessage = async (index, isFinal = false) => {
-            const video = cache.results[index];
-            const platformIcon = video.platform === 'tiktok' ? '🎵 TikTok' : '▶️ YouTube';
-            const messageObj = {
-                content: `🎯 **Lineup cho ${rawQuery.toUpperCase()}** ${isUsingCache ? '(Cache ⚡)' : ''}\nNguồn: **${platformIcon}**\n${video.url}`
-            };
+        await interaction.editReply(await this.renderFinalMessage(query, currentCache, currentIndex));
+        this.setupCollector(interaction, query, false);
+    },
 
-            if (!isFinal) {
-                const btnAccept = new ButtonBuilder().setCustomId('accept').setLabel('✅ Chuẩn rồi').setStyle(ButtonStyle.Success);
-                const btnReject = new ButtonBuilder().setCustomId('reject').setLabel('❌ Báo lỗi/Kế tiếp').setStyle(ButtonStyle.Danger);
-                messageObj.components = [new ActionRowBuilder().addComponents(btnAccept, btnReject)];
-            } else {
-                messageObj.components = [];
-            }
-            return messageObj;
+    async renderFinalMessage(query, cache, index, isFromCache = false) {
+        if (!cache || !cache.results || cache.results.length === 0) {
+             return { content: `❌ Dữ liệu trống.` };
+        }
+        const video = cache.results[index];
+        if (!video) return { content: `❌ Không còn video hợp lệ.` };
+
+        const platformIcon = video.platform === 'tiktok' ? '🎵 TikTok' : '▶️ YouTube';
+        const messageObj = {
+            content: `🎯 **Lineup cho ${query.toUpperCase()}** ${isFromCache ? '(⚡ Tải từ RAM)' : ''}\nNguồn: **${platformIcon}**\n${video.url}`
         };
 
-        // Hiển thị kết quả chính thức từ Cache (đã gộp YT/TT)
-        await interaction.editReply(await renderFinalMessage(currentIndex));
+        const btnAccept = new ButtonBuilder().setCustomId('accept').setLabel('✅ Chuẩn rồi').setStyle(ButtonStyle.Success);
+        const btnReject = new ButtonBuilder().setCustomId('reject').setLabel('❌ Báo lỗi/Kế tiếp').setStyle(ButtonStyle.Danger);
+        messageObj.components = [new ActionRowBuilder().addComponents(btnAccept, btnReject)];
 
+        return messageObj;
+    },
+
+    async setupCollector(interaction, query, isFromCache = false) {
         const responseMessage = await interaction.fetchReply();
         const collector = responseMessage.createMessageComponentCollector({ time: 5 * 60 * 1000 });
 
         collector.on('collect', async i => {
             try {
-                if (i.user.id !== interaction.user.id) {
-                    return i.reply({ content: '❌ Chỉ người dùng lệnh mới có thể phản hồi!', flags: [MessageFlags.Ephemeral] });
+                if (i.user.id !== interaction.user.id) return i.reply({ content: '❌ Không dành cho bạn!', flags: [MessageFlags.Ephemeral] });
+                
+                let cache = RAM_CACHE.get(query);
+                if (!cache) {
+                    cache = await LineupCache.findOne({ searchQuery: query });
                 }
 
+                if (!cache) {
+                    return i.reply({ content: '❌ Lỗi: Không tìm thấy cache.', flags: [MessageFlags.Ephemeral] });
+                }
+
+                let currentIndex = 0;
+                // Tìm index hiện tại dựa vào URL từ nội dung tin nhắn hiện tại
+                currentIndex = cache.results.findIndex(v => i.message.content.includes(v.url));
+                if (currentIndex === -1) currentIndex = 0;
+
                 if (i.customId === 'accept') {
-                    await i.update(await renderFinalMessage(currentIndex, true));
+                    const finalMsg = await this.renderFinalMessage(query, cache, currentIndex, isFromCache);
+                    finalMsg.components = []; // Bỏ nút
+                    await i.update(finalMsg);
                     collector.stop('accepted');
                 } else if (i.customId === 'reject') {
                     if (!cache.rejectedIndexes.includes(currentIndex)) {
                         cache.rejectedIndexes.push(currentIndex);
-                        await cache.save();
+                        // Update cache in memory and DB
+                        RAM_CACHE.set(query, cache);
+                        await LineupCache.updateOne({ searchQuery: query }, { rejectedIndexes: cache.rejectedIndexes });
                     }
                     currentIndex++;
-                    while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
-                        currentIndex++;
-                    }
+                    while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) { currentIndex++; }
 
                     if (currentIndex >= cache.results.length) {
-                        await i.update({ content: `❌ Hết sạch video trong kho dự trữ rồi.`, components: [] });
+                        await i.update({ content: `❌ Hết sạch video chuẩn cho vị trí này rồi!`, components: [] });
                         collector.stop('exhausted');
                     } else {
-                        await i.update(await renderFinalMessage(currentIndex));
+                        await i.update(await this.renderFinalMessage(query, cache, currentIndex, isFromCache));
                     }
                 }
-            } catch (error) {
-                console.error('❌ Collector error:', error);
-            }
+            } catch (error) { console.error('❌ Collector error:', error); }
         });
 
         collector.on('end', async (collected, reason) => {
-             if (reason === 'time') {
-                 try { await interaction.editReply({ components: [] }); } catch (e) {}
-             }
-        });
-    },
+            if (reason === 'time') {
+                try { await interaction.editReply({ components: [] }); } catch (e) {}
+            }
+       });
+    }
 };

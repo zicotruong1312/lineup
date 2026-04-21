@@ -1,20 +1,26 @@
 const { google } = require('googleapis');
 
+// YouTube client (tái sử dụng cấu hình giống youtubeSearch)
+const youtube = google.youtube({
+    version: 'v3',
+    auth: process.env.YOUTUBE_API_KEY
+});
+
 async function searchTikTok(query, agent = '') {
-    if (!process.env.GOOGLE_API_KEY || !process.env.GOOGLE_CX) {
-        console.warn('⚠️ Thiếu GOOGLE_API_KEY hoặc GOOGLE_CX trong file .env');
+    if (!process.env.YOUTUBE_API_KEY) {
+        console.warn('⚠️ Thiếu YOUTUBE_API_KEY. Không thể chạy Phương án A cho TikTok.');
         return [];
     }
 
-    const customsearch = google.customsearch('v1');
-
     try {
-        const response = await customsearch.cse.list({
-            cx: process.env.GOOGLE_CX,
-            q: `"${agent}" ${query} lineup valorant`,
-            auth: process.env.GOOGLE_API_KEY,
-            sort: 'date',
-            num: 5 // Lấy nhiều hơn 1 chút để lọc
+        // Phương án A: Tìm TikTok re-up trên YouTube Shorts
+        const response = await youtube.search.list({
+            part: 'snippet',
+            q: `"${agent}" ${query} tiktok lineup valorant shorts`,
+            type: 'video',
+            videoDuration: 'short', 
+            order: 'relevance', // Đổi sang relevance để lấy kết quả sát hơn thay vì chỉ mới nhất
+            maxResults: 5 
         });
 
         if (!response.data.items || response.data.items.length === 0) {
@@ -22,25 +28,21 @@ async function searchTikTok(query, agent = '') {
         }
 
         const filtered = response.data.items.filter(item => {
-            const title = item.title.toLowerCase();
+            const title = item.snippet.title.toLowerCase();
             // Nếu có agent, bắt buộc title phải chứa tên agent đó
             if (agent && !title.includes(agent.toLowerCase())) return false;
             return true;
         });
 
         return filtered.map(item => ({
-            videoId: item.link, 
-            title: item.title,
-            url: item.link,
-            platform: 'tiktok',
-            thumbnail: item.pagemap?.cse_image?.[0]?.src || null
+            videoId: item.id.videoId,
+            title: item.snippet.title,
+            url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
+            platform: 'tiktok', // Gắn mác TikTok để bot vẫn hiển thị như cũ
+            thumbnail: item.snippet.thumbnails.high.url
         }));
     } catch (error) {
-        if (error.message.includes('access to Custom Search JSON API')) {
-            console.error('❌ TikTok Search: Custom Search API not enabled or access denied.');
-        } else {
-            console.error('❌ Lỗi gọi TikTok (Google CSE) API:', error.message);
-        }
+        console.error('❌ Lỗi TikTok (Phương án A qua YouTube Shorts):', error.message);
         return [];
     }
 }
