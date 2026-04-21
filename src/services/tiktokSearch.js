@@ -13,7 +13,8 @@ async function searchTikTok(query) {
             cx: process.env.GOOGLE_CX,
             q: query + ' lineup valorant',
             auth: process.env.GOOGLE_API_KEY,
-            num: 5, // Lấy 5 kết quả đầu tiên
+            sort: 'date',
+            num: 5, 
         });
 
         if (!response.data.items || response.data.items.length === 0) {

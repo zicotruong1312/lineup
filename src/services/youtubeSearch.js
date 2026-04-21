@@ -16,7 +16,8 @@ async function searchYouTube(query) {
             part: 'snippet',
             q: query + ' lineup valorant shorts',
             type: 'video',
-            videoDuration: 'short', // Lọc ra các video < 1 phút
+            videoDuration: 'short', 
+            order: 'date',
             maxResults: 5
         });
 

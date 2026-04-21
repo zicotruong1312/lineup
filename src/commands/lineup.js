@@ -3,18 +3,47 @@ const LineupCache = require('../models/LineupCache');
 const { searchYouTube } = require('../services/youtubeSearch');
 const { searchTikTok } = require('../services/tiktokSearch');
 
+const AGENTS = [
+    'Viper', 'Sova', 'Brimstone', 'Killjoy', 'Cypher', 'Fade', 'Gekko', 'Harbor', 
+    'KAY/O', 'Raze', 'Sage', 'Astra', 'Breach', 'Chamber', 'Clove', 'Vyse', 
+    'Veto', 'Miks', 'Deadlock', 'Iso', 'Jett', 'Neon', 'Omen', 'Phoenix', 
+    'Reyna', 'Skye', 'Yoru'
+].sort();
+
+const MAPS = [
+    'Abyss', 'Ascent', 'Bind', 'Breeze', 'Corrode', 'Fracture', 'Haven', 
+    'Icebox', 'Lotus', 'Pearl', 'Split', 'Sunset'
+].sort();
+
+const LOCATIONS_MAP = {
+    'Ascent': ['A Site', 'B Site', 'A Main', 'B Main', 'Mid Bottom', 'Market', 'Pizza', 'Hẻm (Alley)'],
+    'Bind': ['A Site (Nghĩa địa)', 'B Site (Default)', 'A Bath (Trụ)', 'A Lamp', 'B Long', 'Hookah', 'Cổng dịch chuyển'],
+    'Breeze': ['A Site', 'B Site', 'A Cave', 'Mid Nest', 'Mid Wood', 'B Back', 'Cầu (Bridge)'],
+    'Haven': ['A Site', 'B Site', 'C Site', 'A Long', 'A Short', 'C Long', 'Garage', 'Garden'],
+    'Icebox': ['A Site', 'B Site', 'B Yellow', 'A Pipes', 'Mid Kitchen', 'Snowman', 'B Tu-nen'],
+    'Split': ['A Site', 'B Site', 'A Main', 'B Main', 'A Ramp', 'Mid Mail', 'B Heaven'],
+    'Lotus': ['A Site', 'B Site', 'C Site', 'A Rubble', 'B Main', 'C Main', 'A Link', 'Rotating Door'],
+    'Pearl': ['A Site', 'B Site', 'B Long', 'A Main', 'Mid Art', 'Secret', 'Restaurant'],
+    'Sunset': ['A Site', 'B Site', 'A Elbow', 'B Market', 'Mid Courtyard', 'Bobas', 'Top Mid'],
+    'Fracture': ['A Site', 'B Site', 'A Dish', 'B Arcade', 'B Under', 'Cầu (Bridge)', 'A Drop'],
+    'Abyss': ['A Site', 'B Site', 'Mid Library', 'A Bridge', 'B Danger', 'Circus', 'Catwalk'],
+    'Corrode': ['A Site', 'B Site', 'Mid', 'A Main', 'B Main', 'Center', 'Tower']
+};
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('lineup')
         .setDescription('Tự động tìm kiếm vị trí Lineup cho các Agent (YouTube/TikTok)')
         .addStringOption(option =>
             option.setName('agent')
-                .setDescription('Tên Agent (Vd: Sova, Viper, Killjoy,...)')
-                .setRequired(true))
+                .setDescription('Tên Agent (Vd: Sova, Viper,...)')
+                .setRequired(true)
+                .setAutocomplete(true))
         .addStringOption(option =>
             option.setName('map')
-                .setDescription('Tên bản đồ (Vd: Ascent, Bind, Split,...)')
-                .setRequired(true))
+                .setDescription('Tên bản đồ (Vd: Ascent, Bind,...)')
+                .setRequired(true)
+                .setAutocomplete(true))
         .addStringOption(option =>
             option.setName('side')
                 .setDescription('Phe (Tấn công hay Phòng thủ)')
@@ -25,40 +54,63 @@ module.exports = {
                 ))
         .addStringOption(option =>
             option.setName('location')
-                .setDescription('Vị trí cần ném (Vd: B Main, A Site, Mid...)')
-                .setRequired(true)),
-                
+                .setDescription('Vị trí cần ném (Vd: B Main, A Site,...)')
+                .setRequired(true)
+                .setAutocomplete(true)),
+
+    async autocomplete(interaction) {
+        const focusedOption = interaction.options.getFocused(true);
+        let choices = [];
+
+        if (focusedOption.name === 'agent') {
+            choices = AGENTS;
+        } else if (focusedOption.name === 'map') {
+            choices = MAPS;
+        } else if (focusedOption.name === 'location') {
+            const mapValue = interaction.options.getString('map');
+            if (mapValue && LOCATIONS_MAP[mapValue]) {
+                choices = LOCATIONS_MAP[mapValue];
+            } else {
+                choices = ['A Site', 'B Site', 'Mid', 'A Main', 'B Main'];
+            }
+        }
+
+        const filtered = choices.filter(choice => 
+            choice.toLowerCase().includes(focusedOption.value.toLowerCase())
+        ).slice(0, 25);
+
+        await interaction.respond(
+            filtered.map(choice => ({ name: choice, value: choice }))
+        );
+    },
+
     async execute(interaction) {
         const agent = interaction.options.getString('agent');
         const map = interaction.options.getString('map');
         const side = interaction.options.getString('side');
         const location = interaction.options.getString('location');
 
-        // Chuẩn hóa từ khóa tìm kiếm
         const rawQuery = `${agent} ${map} ${side} ${location}`;
         const query = rawQuery.toLowerCase().replace(/\s+/g, ' ').trim();
 
-        await interaction.deferReply(); // Phản hồi tạm tránh timeout
+        await interaction.deferReply();
 
         let cache = await LineupCache.findOne({ searchQuery: query });
         let isUsingCache = true;
 
-        // Nếu chưa có Cache hoặc tất cả kết quả cũ đã bị báo lỗi hết
         if (!cache || cache.rejectedIndexes.length >= cache.results.length) {
             isUsingCache = false;
             await interaction.editReply(`🤖 **Đang dùng drone quét dữ liệu từ YouTube & TikTok cho:** \`${rawQuery}\`...`);
 
-            // Chạy ngầm 2 cỗ máy tìm kiếm song song lấy mỗi bên 5 kết quả
             const [ytResults, ttResults] = await Promise.all([
                 searchYouTube(query),
                 searchTikTok(query)
             ]);
 
-            // Trộn xen kẽ kết quả (1 YT, 1 TT, 1 YT...)
             const combinedResults = [];
             const maxLength = Math.max(ytResults.length, ttResults.length);
             for (let i = 0; i < maxLength; i++) {
-                if (ttResults[i]) combinedResults.push(ttResults[i]); // Ưu tiên Tiktok trước như đã nói
+                if (ttResults[i]) combinedResults.push(ttResults[i]);
                 if (ytResults[i]) combinedResults.push(ytResults[i]);
             }
 
@@ -66,7 +118,6 @@ module.exports = {
                 return interaction.editReply(`❌ Không tìm thấy Lineup nào cho \`${rawQuery}\` trên mạng! Thử dùng từ khóa dễ hiểu hơn xem sao.`);
             }
 
-            // Xóa cache cũ nếu tồn tại nhung hết sạch video để lưu mới lại từ đầu
             if (cache) {
                  await LineupCache.deleteOne({ _id: cache._id });
             }
@@ -78,7 +129,6 @@ module.exports = {
             });
         }
 
-        // Tìm video hợp lệ đầu tiên (chưa bị vote ❌)
         let currentIndex = 0;
         while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
             currentIndex++;
@@ -88,7 +138,6 @@ module.exports = {
              return interaction.editReply(`❌ Tất cả video tìm được đều đã bị đánh dấu là sai. Xin hãy thử lại với một vị trí khác.`);
         }
 
-        // Hàm helper để render thông điệp kèm Nút
         const renderMessage = async (index, isFinal = false) => {
             const video = cache.results[index];
             const platformIcon = video.platform === 'tiktok' ? '🎵 TikTok' : '▶️ YouTube';
@@ -109,16 +158,13 @@ module.exports = {
                 
                 messageObj.components = [new ActionRowBuilder().addComponents(btnAccept, btnReject)];
             } else {
-                messageObj.components = []; // Xóa menu buttons sau khi người dùng chốt
+                messageObj.components = [];
             }
 
             return messageObj;
         };
 
-        // Lấy Message object chính xác nhất để gắn Collector
         const responseMessage = await interaction.fetchReply();
-
-        // Khởi tạo Collector nốt nghe các Button (hiệu lực trong 5 phút)
         const collector = responseMessage.createMessageComponentCollector({ time: 5 * 60 * 1000 });
 
         collector.on('collect', async i => {
@@ -131,19 +177,14 @@ module.exports = {
                 }
 
                 if (i.customId === 'accept') {
-                    console.log(`[Lineup] User accepted result at index ${currentIndex}`);
-                    // Người dùng xác nhận đúng, dừng collector, update message xóa nút
                     await i.update(await renderMessage(currentIndex, true));
                     collector.stop('accepted');
                 } else if (i.customId === 'reject') {
-                    console.log(`[Lineup] User rejected result at index ${currentIndex}`);
-                    // Báo sai -> Đẩy index này vào bị loại
                     if (!cache.rejectedIndexes.includes(currentIndex)) {
                         cache.rejectedIndexes.push(currentIndex);
                         await cache.save();
                     }
 
-                    // Nhảy sang video kế tiếp hợp lệ
                     currentIndex++;
                     while (cache.rejectedIndexes.includes(currentIndex) && currentIndex < cache.results.length) {
                         currentIndex++;
@@ -163,7 +204,6 @@ module.exports = {
             } catch (error) {
                 console.error('❌ Error during button collector processing:');
                 console.error(error);
-                // Cố gắng phản hồi lỗi nếu tương tác chưa được acknowledge
                 if (!i.replied && !i.deferred) {
                     try {
                         await i.reply({ 
@@ -177,12 +217,9 @@ module.exports = {
 
         collector.on('end', async (collected, reason) => {
              if (reason === 'time') {
-                 // Nếu hết thời gian 5 phút mà không ai ấn, tự động xoá cái buttons để dọn rác giao diện
                  try {
                      await interaction.editReply({ components: [] });
-                 } catch (e) {
-                     // Bỏ qua lỗi nếu message gốc đã bị xoá
-                 }
+                 } catch (e) {}
              }
         });
     },

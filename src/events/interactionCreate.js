@@ -35,6 +35,16 @@ module.exports = {
             // Button interactions are typically handled by collectors, 
             // but we log them here to ensure they reach the bot.
             console.log(`[Button Clicked] ID: ${interaction.customId} on message ${interaction.message.id}`);
+        } else if (interaction.isAutocomplete()) {
+            const command = interaction.client.commands.get(interaction.commandName);
+            if (!command) return;
+
+            try {
+                await command.autocomplete(interaction);
+            } catch (error) {
+                console.error(`❌ Error in autocomplete for ${interaction.commandName}:`);
+                console.error(error);
+            }
         }
     },
 };
