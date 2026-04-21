@@ -30,6 +30,9 @@ const LOCATIONS_MAP = {
     'Corrode': ['A Site', 'B Site', 'Mid', 'A Main', 'B Main', 'Center', 'Tower']
 };
 
+// Bộ nhớ đạm RAM để phản hồi 1-2s cho các tìm kiếm lặp lại
+const RAM_CACHE = new Map();
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('lineup')
@@ -95,74 +98,48 @@ module.exports = {
 
         await interaction.deferReply();
 
-        let cache = await LineupCache.findOne({ searchQuery: query });
-        let isUsingCache = true;
-
-        if (!cache || cache.rejectedIndexes.length >= cache.results.length) {
-            isUsingCache = false;
-            await interaction.editReply(`🔎 **Đang tìm Lineup siêu tốc cho:** \`${rawQuery}\`...`);
-
-            // Giai đoạn 1: Tìm YouTube trước vì nó nhanh nhất
-            const ytResults = await searchYouTube(query);
-            
-            if (ytResults.length > 0) {
-                // Có kết quả YT, hiển thị ngay lập tức
-                const tempResults = [...ytResults];
-                let tempIndex = 0;
-
-                const renderStepMessage = async (index, searchingMore = true) => {
-                    const video = tempResults[index];
-                    const platformIcon = '▶️ YouTube';
-                    let content = `🎯 **Lineup cho ${rawQuery.toUpperCase()}**\nNguồn: **${platformIcon}**\n${video.url}`;
-                    if (searchingMore) content += '\n\n*(Drone vẫn đang quét thêm trên TikTok...)*';
-                    
-                    const btnAccept = new ButtonBuilder().setCustomId('accept').setLabel('✅ Chuẩn rồi').setStyle(ButtonStyle.Success);
-                    const btnReject = new ButtonBuilder().setCustomId('reject').setLabel('❌ Báo lỗi/Kế tiếp').setStyle(ButtonStyle.Danger);
-                    
-                    return { 
-                        content, 
-                        components: [new ActionRowBuilder().addComponents(btnAccept, btnReject)] 
-                    };
-                };
-
-                await interaction.editReply(await renderStepMessage(tempIndex, true));
-
-                // Giai đoạn 2: Tìm TikTok ngầm
-                const ttResults = await searchTikTok(query);
-                
-                // Trộn kết quả và tạo Cache
-                const finalResults = [];
-                const maxLength = Math.max(ytResults.length, ttResults.length);
-                for (let i = 0; i < maxLength; i++) {
-                    if (ttResults[i]) finalResults.push(ttResults[i]);
-                    if (ytResults[i]) finalResults.push(ytResults[i]);
-                }
-
-                if (cache) await LineupCache.deleteOne({ _id: cache._id });
-                cache = await LineupCache.create({
-                    searchQuery: query,
-                    results: finalResults,
-                    rejectedIndexes: []
-                });
-
-                // Cập nhật lại UI bỏ dòng "đang tìm thêm"
-                await interaction.editReply(await renderStepMessage(tempIndex, false));
-
-            } else {
-                // Nếu YouTube không có gì, phải đợi TikTok
-                const ttResults = await searchTikTok(query);
-                if (ttResults.length === 0) {
-                    return interaction.editReply(`❌ Không tìm thấy Lineup nào cho \`${rawQuery}\` trên cả YT & TikTok!`);
-                }
-
-                if (cache) await LineupCache.deleteOne({ _id: cache._id });
-                cache = await LineupCache.create({
-                    searchQuery: query,
-                    results: ttResults,
-                    rejectedIndexes: []
-                });
-            }
+        // 1. Kiểm tra RAM Cache (Siêu nhanh 1-2s)
+        if (RAM_CACHE.has(query)) {
+            const cacheData = RAM_CACHE.get(query);
+            return interaction.editReply(await this.renderFinalMessage(query, cacheData, 0, true));
         }
+
+        // 2. Kiểm tra Database Cache
+        let dbCache = await LineupCache.findOne({ searchQuery: query });
+        if (dbCache && dbCache.rejectedIndexes.length < dbCache.results.length) {
+            RAM_CACHE.set(query, dbCache);
+            return interaction.editReply(await this.renderFinalMessage(query, dbCache, 0, true));
+        }
+
+        // 3. Nếu không có cache, tiến hành tìm kiếm mới
+        await interaction.editReply(`🔎 **Đang tìm Lineup chuẩn cho ${agent} tại ${map}...**`);
+
+        // Giai đoạn 1: YouTube (Ưu tiên tốc độ)
+        const ytResults = await searchYouTube(query, agent);
+        
+        let currentCache = null;
+
+        if (ytResults.length > 0) {
+            // Hiện YT ngay
+            const tempResults = [...ytResults];
+            let tempIndex = 0;
+
+            const renderStepMessage = async (index, searchingMore = true) => {
+                const video = tempResults[index];
+                let content = `🎯 **Lineup cho ${rawQuery.toUpperCase()}**\nNguồn: **▶️ YouTube**\n${video.url}`;
+                if (searchingMore) content += '\n\n*(Đang quét thêm TikTok để có nhiều lựa chọn hơn...)*';
+                
+                const btnAccept = new ButtonBuilder().setCustomId('accept').setLabel('✅ Chuẩn rồi').setStyle(ButtonStyle.Success);
+                const btnReject = new ButtonBuilder().setCustomId('reject').setLabel('❌ Báo lỗi/Kế tiếp').setStyle(ButtonStyle.Danger);
+                
+                return { content, components: [new ActionRowBuilder().addComponents(btnAccept, btnReject)] };
+            };
+
+            await interaction.editReply(await renderStepMessage(tempIndex, true));
+
+            // Giai đoạn 2: TikTok ngầm
+            const ttResults = await searchTikTok(query, agent);
+            
 
         // --- PHẦN COLLECTOR CHÍNH ---
         let currentIndex = 0;

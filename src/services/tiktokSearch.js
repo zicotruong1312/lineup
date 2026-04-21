@@ -1,6 +1,6 @@
 const { google } = require('googleapis');
 
-async function searchTikTok(query) {
+async function searchTikTok(query, agent = '') {
     if (!process.env.GOOGLE_API_KEY || !process.env.GOOGLE_CX) {
         console.warn('⚠️ Thiếu GOOGLE_API_KEY hoặc GOOGLE_CX trong file .env');
         return [];
@@ -14,14 +14,21 @@ async function searchTikTok(query) {
             q: query + ' lineup valorant',
             auth: process.env.GOOGLE_API_KEY,
             sort: 'date',
-            num: 3, 
+            num: 5 // Lấy nhiều hơn 1 chút để lọc
         });
 
         if (!response.data.items || response.data.items.length === 0) {
             return [];
         }
 
-        return response.data.items.map(item => ({
+        const filtered = response.data.items.filter(item => {
+            const title = item.title.toLowerCase();
+            // Nếu có agent, bắt buộc title phải chứa tên agent đó
+            if (agent && !title.includes(agent.toLowerCase())) return false;
+            return true;
+        });
+
+        return filtered.map(item => ({
             videoId: item.link, 
             title: item.title,
             url: item.link,

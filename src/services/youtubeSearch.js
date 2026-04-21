@@ -18,14 +18,21 @@ async function searchYouTube(query) {
             type: 'video',
             videoDuration: 'short', 
             order: 'date',
-            maxResults: 3
+            maxResults: 5 // Lấy nhiều hơn một chút để lọc
         });
 
         if (!response.data.items || response.data.items.length === 0) {
             return [];
         }
 
-        return response.data.items.map(item => ({
+        const filtered = response.data.items.filter(item => {
+            const title = item.snippet.title.toLowerCase();
+            // Nếu có agent, bắt buộc title phải chứa tên agent đó
+            if (agent && !title.includes(agent.toLowerCase())) return false;
+            return true;
+        });
+
+        return filtered.map(item => ({
             videoId: item.id.videoId,
             title: item.snippet.title,
             url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
